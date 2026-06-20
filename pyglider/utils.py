@@ -12,7 +12,7 @@ import xarray as xr
 import yaml
 from scipy.signal import argrelextrema
 from scipy import signal
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 from pyglider._version import __version__
 
@@ -607,19 +607,28 @@ def fill_metadata(ds, metadata, sensor_data, varnames=None):
     ds.attrs['cdm_data_type'] = 'Trajectory'
     ds.attrs['Conventions'] = 'CF-1.8'
     ds.attrs['standard_name_vocabulary'] = 'CF Standard Name Table v72'
-    ds.attrs['date_created'] = str(np.datetime64('now')) + 'Z'
-    ds.attrs['date_issued'] = str(np.datetime64('now')) + 'Z'
+    _now = datetime.now(tz=timezone.utc).strftime('%Y%m%dT%H%M%S')
+    ds.attrs['date_created'] = _now
+    ds.attrs['date_issued'] = _now
     ds.attrs['date_modified'] = ' '
     ds.attrs['id'] = get_file_id(ds)
     ds.attrs['title'] = ds.attrs['id']
 
     dt = ds.time.values
-    ds.attrs['time_coverage_start'] = '%s' % dt[0]
-    ds.attrs['time_coverage_end'] = '%s' % dt[-1]
+    ds.attrs['time_coverage_start'] = datetime.fromtimestamp(
+        int(dt[0].astype('datetime64[s]').astype('int64')), tz=timezone.utc
+    ).strftime('%Y%m%dT%H%M%S')
+    ds.attrs['time_coverage_end'] = datetime.fromtimestamp(
+        int(dt[-1].astype('datetime64[s]').astype('int64')), tz=timezone.utc
+    ).strftime('%Y%m%dT%H%M%S')
 
     # make sure this is ISO readable....
     ds.attrs['deployment_start'] = str(dt[0])[:19]
     ds.attrs['deployment_end'] = str(dt[-1])[:19]
+
+    # OG 1.0 requires start_date in YYYYmmddTHHMMss format
+    _ts = int(dt[0].astype('datetime64[s]').astype('int64'))
+    ds.attrs['start_date'] = datetime.fromtimestamp(_ts, tz=timezone.utc).strftime('%Y%m%dT%H%M%S')
 
     ds.attrs['processing_level'] = (
         'Level 0 (L0) processed data timeseries; no corrections or data screening'
@@ -947,7 +956,8 @@ def _potential_temperature(ds, inputs):
 
 
 def _potential_density_sigma0(ds, inputs):
-    """Compute sigma0 (potential density - 1000) from S, T, P, lat, lon."""
+    """Compute sigma0 (sigma_theta, potential density anomaly referenced to 0 dbar)
+    from S, T, P, lat, lon.  Returns rho_0 - 1000 in kg/m³."""
     sal = ds[inputs['salinity']]
     temp = ds[inputs['temperature']]
     pres = ds[inputs['pressure']]
@@ -958,7 +968,7 @@ def _potential_density_sigma0(ds, inputs):
     sa = gsw.SA_from_SP(sal, pres, lon, lat)
     ct = gsw.CT_from_t(sa, temp, pres)
     return xr.DataArray(
-        (1000 + gsw.density.sigma0(sa, ct)).values, dims=('time',)
+        gsw.density.sigma0(sa, ct).values, dims=('time',)
     )
 
 
@@ -1026,8 +1036,10 @@ def _dispatch_processing_methods(ds, ncvar):
     Variables are processed in YAML order, so later entries can depend on
     earlier ones (e.g. ``POTENTIAL_TEMPERATURE`` uses ``PSAL`` which must be
     computed first).  Methods already handled by explicit utility calls
-    (``depth_from_pressure``, ``find_profiles``, ``distance_over_ground``) are
-    silently skipped.
+    (``depth_from_pressure``, ``find_profiles``) are not recomputed, but any
+    YAML attributes (e.g. ``vocabulary``, ``long_name``) are applied to the
+    variable if it already exists in *ds* — so callers should invoke the
+    explicit utility functions before calling this dispatcher.
 
     Parameters
     ----------
@@ -1053,6 +1065,17 @@ def _dispatch_processing_methods(ds, ncvar):
                 'Skipping %s for %s (handled by explicit utility call)',
                 method_name, varname,
             )
+            # Apply YAML attrs to the variable if it was already computed by
+            # the explicit utility call (e.g. vocabulary, long_name, units).
+            if varname in ds:
+                extra_attrs = {k: v for k, v in attrs.items()
+                               if k not in _EXPLICIT_ATTR_SKIP}
+                # CF §2.5: valid_min/valid_max must have the same dtype as the variable.
+                var_dtype = ds[varname].dtype
+                for bound in ('valid_min', 'valid_max'):
+                    if bound in extra_attrs:
+                        extra_attrs[bound] = var_dtype.type(extra_attrs[bound])
+                ds[varname].attrs.update(extra_attrs)
             continue
 
         if method_name not in BUILTIN_METHODS:
@@ -1087,6 +1110,51 @@ def _dispatch_processing_methods(ds, ncvar):
         var_attrs = fill_required_attrs(var_attrs)
         ds[varname] = (('time',), result.values, var_attrs)
 
+    return ds
+
+
+_EXPLICIT_ATTR_SKIP = frozenset(
+    ('processing_method', 'processing_role', 'average_method', 'source', 'coordinates')
+)
+
+
+def _apply_explicit_yaml_attrs(ds, ncvar):
+    """
+    Apply YAML attrs to variables that were computed by explicitly-handled
+    processing methods (e.g. ``find_profiles``).
+
+    ``_dispatch_processing_methods`` skips recomputing these variables, and
+    also applies their YAML attrs at that point — but only if the variable
+    already exists in *ds*.  When the explicit utility call happens *after*
+    the dispatcher (as with ``get_profiles_new`` in the slocum pipeline, where
+    it must run after time is converted to datetime64), the attrs are not
+    applied.  Call this function after the late explicit call to fill the gap.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+    ncvar : dict
+        ``netcdf_variables`` mapping from the deployment YAML.
+
+    Returns
+    -------
+    ds : xarray.Dataset
+    """
+    for varname, attrs in ncvar.items():
+        if not isinstance(attrs, dict) or 'processing_method' not in attrs:
+            continue
+        method_name = next(iter(attrs['processing_method']))
+        if method_name not in _EXPLICITLY_HANDLED_METHODS:
+            continue
+        if varname in ds:
+            extra_attrs = {k: v for k, v in attrs.items()
+                           if k not in _EXPLICIT_ATTR_SKIP}
+            # CF §2.5: valid_min/valid_max must have the same dtype as the variable.
+            var_dtype = ds[varname].dtype
+            for bound in ('valid_min', 'valid_max'):
+                if bound in extra_attrs:
+                    extra_attrs[bound] = var_dtype.type(extra_attrs[bound])
+            ds[varname].attrs.update(extra_attrs)
     return ds
 
 
@@ -1125,6 +1193,195 @@ def _load_dataset(filename):
                     # first, then promote it as the dimension index via swap_dims
                     ds = ds.rename({var: 'time'}).swap_dims({time_dim: 'time'})
                 break
+    return ds
+
+
+def make_sensor_variables(ds, deployment):
+    """
+    Add OG 1.0 sensor metadata scalar variables from the ``glider_devices``
+    section of the deployment YAML.
+
+    For each device entry that contains a ``sensor_name`` key, a dimensionless
+    ``int`` variable is created in *ds* with that name.  This satisfies the
+    OG 1.0 requirement that every ``sensor`` attribute on a data variable must
+    refer to an existing scalar variable in the file.
+
+    If no entry has ``sensor_name`` the function returns *ds* unchanged, so
+    existing YAMLs without it continue to work.
+
+    YAML example::
+
+        glider_devices:
+          ctd:
+            sensor_name: SENSOR_CTD_9507   # netCDF variable name
+            long_name:   CTD Metadata
+            make_model:  Seabird SlocumCTD
+            maker:       Seabird Scientific
+            model:       SlocumCTD
+            type:        CTD
+            type_vocabulary: "https://vocab.nerc.ac.uk/collection/L05/current"
+            serial:      '9507'            # → sensor_serial_number
+            calibration_date: "2022-01-01" # → sensor_calibration_date
+            Thermal_lag_constants_[alpha,tau]: [0.2, 2]   # pyglider only
+            dTdC: 0                                        # pyglider only
+
+    The following keys are consumed by pyglider and **not** written as netCDF
+    attributes: ``sensor_name``, ``Thermal_lag_constants_*``, ``dTdC``.
+
+    The following keys are **renamed** on output:
+
+    * ``make``             → ``maker``  (if ``maker`` is not already present)
+    * ``serial``           → ``sensor_serial_number``
+    * ``calibration_date`` → ``sensor_calibration_date``
+
+    ``coverage_content_type = "referenceInformation"`` is always added.
+    ``platform`` is set to the value of ``metadata.platform`` when available.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+    deployment : dict
+        Parsed deployment YAML.
+
+    Returns
+    -------
+    ds : xarray.Dataset
+    """
+    devices = deployment.get('glider_devices', {})
+    if not devices:
+        return ds
+
+    # internal keys consumed by pyglider, never written as netCDF attributes
+    _SKIP = {'sensor_name', 'dTdC'}
+
+    # rename map: YAML key → netCDF attribute name
+    _RENAME = {
+        'make':             'maker',
+        'serial':           'sensor_serial_number',
+        'calibration_date': 'sensor_calibration_date',
+    }
+
+    platform_val = deployment.get('metadata', {}).get('platform', '')
+
+    for _device_key, device in devices.items():
+        sensor_name = device.get('sensor_name')
+        if not sensor_name:
+            continue
+
+        attrs = {}
+        attrs['coverage_content_type'] = 'referenceInformation'
+        if platform_val:
+            attrs['platform'] = platform_val
+
+        for k, v in device.items():
+            # skip pyglider-internal keys
+            if k in _SKIP:
+                continue
+            if k.startswith('Thermal_lag_constants'):
+                continue
+            # rename
+            out_key = _RENAME.get(k, k)
+            # if the entry already has 'maker', don't let 'make' overwrite it
+            if out_key == 'maker' and 'maker' in attrs:
+                continue
+            attrs[out_key] = v
+
+        ds[sensor_name] = xr.Variable([], -127, attrs=attrs)
+        ds[sensor_name].encoding['dtype'] = 'int8'
+        ds[sensor_name].encoding['_FillValue'] = -127
+        _log.info('Added sensor variable %s', sensor_name)
+
+    return ds
+
+
+def make_scalar_variables(ds, deployment):
+    """
+    Add dimensionless (scalar) variables to *ds* from the ``scalar_variables``
+    section of the deployment YAML.
+
+    If the ``scalar_variables`` key is absent the function returns *ds*
+    unchanged, so existing YAMLs without it continue to work without
+    modification.
+
+    Each entry under ``scalar_variables`` must supply its value via one of:
+
+    ``value``
+        A literal scalar (string or number).
+    ``from_metadata``
+        The name of a key in ``deployment['metadata']`` whose value to use.
+
+    If both are present, ``value`` takes precedence.  If neither is present
+    the variable is skipped with a warning.
+
+    For variables whose ``units`` attribute contains ``'seconds since'``, a
+    string value is automatically converted to a float count of seconds since
+    the epoch given in ``units`` (defaulting to 1970-01-01T00:00:00Z).
+
+    All remaining keys in the entry (``long_name``, ``units``, ``comment``,
+    etc.) become netCDF variable attributes.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        Dataset to add scalar variables to.
+    deployment : dict
+        Parsed deployment YAML (from :func:`_get_deployment`).
+
+    Returns
+    -------
+    ds : xarray.Dataset
+        Dataset with any scalar variables added.
+    """
+    scalar_vars = deployment.get('scalar_variables')
+    if not scalar_vars:
+        return ds
+
+    metadata = deployment.get('metadata', {})
+
+    for varname, entry in scalar_vars.items():
+        entry = dict(entry)  # don't mutate the YAML dict
+
+        # --- resolve value ---
+        if 'value' in entry:
+            val = entry.pop('value')
+            entry.pop('from_metadata', None)  # ignore if both present
+        elif 'from_metadata' in entry:
+            meta_key = entry.pop('from_metadata')
+            if meta_key not in metadata:
+                _log.warning(
+                    'scalar_variables: metadata key %r not found for %s; skipping',
+                    meta_key, varname,
+                )
+                continue
+            val = metadata[meta_key]
+        else:
+            _log.warning(
+                'scalar_variables: no value or from_metadata for %s; skipping', varname
+            )
+            continue
+
+        # --- time conversion ---
+        units = entry.get('units', '')
+        if 'seconds since' in units and isinstance(val, str):
+            try:
+                # parse the reference epoch from the units string, e.g.
+                # "seconds since 1970-01-01T00:00:00Z"
+                ref_str = units.split('seconds since', 1)[1].strip().rstrip('Z')
+                epoch = np.datetime64(ref_str)
+                val = float(
+                    (np.datetime64(val) - epoch) / np.timedelta64(1, 's')
+                )
+            except Exception:
+                _log.warning(
+                    'scalar_variables: could not convert %r to epoch seconds for %s; skipping',
+                    val, varname,
+                )
+                continue
+
+        # remaining keys become attributes
+        ds[varname] = ([], val, entry)
+        _log.info('Added scalar variable %s = %r', varname, val)
+
     return ds
 
 
@@ -1180,11 +1437,41 @@ def _save_dataset(ds, filename, deployment, **kwargs):
     if aux_coords:
         ds = ds.set_coords(aux_coords)
 
+    # Fix any hardcoded lowercase coordinate names in 'coordinates' attrs that
+    # were set before the rename (e.g. by get_profiles_new).
+    if time_name != 'time':
+        _coord_name_map = {
+            'time': time_name,
+            'latitude': vn.get('latitude', 'latitude'),
+            'longitude': vn.get('longitude', 'longitude'),
+            'depth': vn.get('depth', 'depth'),
+        }
+        for var in list(ds.data_vars) + list(ds.coords):
+            if 'coordinates' in ds[var].attrs:
+                old = ds[var].attrs['coordinates']
+                new = ' '.join(_coord_name_map.get(n, n) for n in old.split())
+                if new != old:
+                    ds[var].attrs['coordinates'] = new
+
+    # TIME_GPS is stored as float64 seconds since epoch; ensure the units
+    # attribute propagates correctly as netCDF encoding.
+    if 'TIME_GPS' in ds:
+        enc = dict(kwargs.get('encoding', {}))
+        if 'TIME_GPS' not in enc:
+            enc['TIME_GPS'] = {
+                'dtype': 'float64',
+                '_FillValue': -1.0,
+            }
+            kwargs = {**kwargs, 'encoding': enc}
+
     # CF §9.8: trajectory files require a scalar variable with cf_role = trajectory_id.
-    if 'trajectory' not in ds:
+    # OG 1.0 requires the variable to be named TRAJECTORY (uppercase); other
+    # conventions use lowercase 'trajectory'.
+    traj_varname = 'TRAJECTORY' if output_dim == 'N_MEASUREMENTS' else 'trajectory'
+    if traj_varname not in ds:
         traj_id = ds.attrs.get('deployment_name', '')
-        ds['trajectory'] = traj_id
-        ds['trajectory'].attrs = {
+        ds[traj_varname] = traj_id
+        ds[traj_varname].attrs = {
             'cf_role': 'trajectory_id',
             'long_name': 'Trajectory/Deployment Name',
             'comment': (

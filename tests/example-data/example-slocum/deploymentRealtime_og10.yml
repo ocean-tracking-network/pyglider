@@ -16,7 +16,9 @@ metadata:
                    for Innovation, BC Knowledge Development Fund
   comment:        "Calvert Island test deployment June 2019."
   contributor_name: James Pegg, Jody Klymak, Tetjana Ross, Cailin Burmaster
-  contributor_role: Lead Technician, Principal Investigator, Co-PI, Technician
+  contributor_email: jpegg@uvic.ca, jklymak@uvic.ca, tross@uvic.ca, cburmaster@uvic.ca
+  contributor_role: Technical Coordinator, PI, PI, Operator
+  contributor_role_vocabulary: "http://vocab.nerc.ac.uk/collection/W08/current/CONT0005/,http://vocab.nerc.ac.uk/collection/W08/current/CONT0004/,http://vocab.nerc.ac.uk/collection/W08/current/CONT0004/,http://vocab.nerc.ac.uk/collection/W08/current/CONT0003/"
   creator_email: jklymak@uvic.ca
   creator_name:  Jody Klymak
   creator_url:   http://cproof.uvic.ca
@@ -31,6 +33,9 @@ metadata:
   glider_instrument_name: slocum
   glider_wmo: "999999"
   institution: C-PROOF
+  contributing_institutions: C-PROOF
+  contributing_institutions_role: Operator
+  contributing_institutions_role_vocabulary: "http://vocab.nerc.ac.uk/collection/W08/current/CONT0003/"
   keywords: "AUVS, Autonomous Underwater Vehicles, Oceans, Ocean Pressure,
              Water Pressure, Oceans, Ocean Temperature, Water Temperature,
              Oceans, Salinity/Density, Conductivity, Oceans,
@@ -39,9 +44,12 @@ metadata:
   license: "This data may be redistributed and used without restriction or
             warranty"
   metadata_link: "https://cproof.uvic.ca"
-  Metadata_Conventions: CF-1.10, ACDD-1.3, OG-1.0
+  metadata_conventions: CF-1.10, ACDD-1.3, OG-1.0
   Conventions: CF-1.10, ACDD-1.3, OG-1.0
   naming_authority: "ca.uvic.cproof"
+  platform:         "sub-surface gliders"
+  platform_serial:  "713"
+  platform_vocabulary: "http://vocab.nerc.ac.uk/collection/L06/current/27/"
   platform_type:    "Slocum Glider"
   processing_level: "Data provided as is with no expressed or implied
                      assurance of quality assurance or quality control."
@@ -58,6 +66,10 @@ metadata:
   summary: Manufacturer test in Saanich Inlet.
   transmission_system: IRRIDIUM
   wmo_id: "999999"
+  deployment_vessel: "Vellela Vellela"
+  deployment_station: "Imperial Eagle"
+  deployment_latitude: "48.873728"
+  deployment_longitude: "-125.212218"
 
 
 glider_devices:
@@ -66,11 +78,16 @@ glider_devices:
     model: Pressure
     serial: '104702'
   ctd:
-    make: Seabird
-    model: SlocumCTD
-    serial: '9507'
-    long_name: Seabird SlocumCTD
+    sensor_name: SENSOR_CTD
+    long_name: CTD Metadata
     make_model: Seabird SlocumCTD
+    maker: Seabird Scientific
+    model: SlocumCTD
+    type: CTD
+    type_vocabulary: "https://vocab.nerc.ac.uk/collection/L05/current"
+    # pyglider-only fields (used for processing, not written to netCDF):
+    make: Seabird
+    serial: '9507'
     factory_calibrated: " "
     calibration_date: " "
     calibration_report: " "
@@ -78,12 +95,26 @@ glider_devices:
     Thermal_lag_constants_[alpha,tau]: [0.2, 2]
     dTdC: 0
   optics:
-    make: Wetlabs
+    sensor_name: SENSOR_FLUOROMETER
+    long_name: Fluorometer Metadata
+    make_model: Wetlabs FLBBCDSLC
+    maker: Wetlabs
     model: FLBBCDSLC
+    type: fluorometer_chla
+    type_vocabulary: "http://vocab.nerc.ac.uk/collection/R25/current/"
+    # pyglider-only:
+    make: Wetlabs
     serial: '5059'
   oxygen:
-    make: AADI
+    sensor_name: SENSOR_DOXY
+    long_name: Oxygen Sensor Metadata
+    make_model: AADI Optode4831
+    maker: AADI
     model: Optode4831
+    type: OPTODE_DOXY
+    type_vocabulary: "http://vocab.nerc.ac.uk/collection/R25/current/"
+    # pyglider-only:
+    make: AADI
     serial: '665'
 
 
@@ -142,7 +173,7 @@ netcdf_variables:
     long_name:     Electrical conductivity of the water body by CTD
     standard_name: sea_water_electrical_conductivity
     units:         S m-1
-    sensor:        SENSOR_CTD_9507
+    sensor:        SENSOR_CTD
     valid_min:     0.0
     valid_max:     10.0
     observation_type: measured
@@ -157,7 +188,7 @@ netcdf_variables:
     long_name:     Temperature of the water body by CTD
     standard_name: sea_water_temperature
     units:         degree_C
-    sensor:        SENSOR_CTD_9507
+    sensor:        SENSOR_CTD
     valid_min:     -5.0
     valid_max:     50.0
     observation_type: measured
@@ -173,7 +204,7 @@ netcdf_variables:
     standard_name: sea_water_pressure
     units:         dbar
     conversion:    bar2dbar
-    sensor:        SENSOR_CTD_9507
+    sensor:        SENSOR_CTD
     valid_min:     0.0
     valid_max:     2000.0
     positive:      down
@@ -252,13 +283,13 @@ netcdf_variables:
     valid_min:     0.0
     valid_max:     40.0
     observation_type: calculated
-    sensor:        SENSOR_CTD_9507
+    sensor:        SENSOR_CTD
     accuracy:      0.01
     precision:     0.01
     resolution:    0.001
     vocabulary:    http://vocab.nerc.ac.uk/collection/OG1/current/PSAL/
 
-  POTENTIAL_TEMPERATURE:
+  THETA:
     processing_method:
       potential_temperature:
         salinity:     PSAL
@@ -267,13 +298,13 @@ netcdf_variables:
     long_name:     Water potential temperature
     standard_name: sea_water_potential_temperature
     units:         degree_C
-    comment:       "raw, uncorrected salinity"
     observation_type: calculated
     accuracy:      0.002
     precision:     0.001
     resolution:    0.0001
+    vocabulary:    http://vocab.nerc.ac.uk/collection/OG1/current/THETA/
 
-  SIGMA0:
+  SIGTHETA:
     processing_method:
       potential_density_sigma0:
         salinity:     PSAL
@@ -284,11 +315,11 @@ netcdf_variables:
     long_name:     Water potential density referenced to surface
     standard_name: sea_water_potential_density
     units:         kg m-3
-    comment:       "raw, uncorrected salinity"
     observation_type: calculated
     accuracy:      0.01
     precision:     0.01
     resolution:    0.001
+    vocabulary:    http://vocab.nerc.ac.uk/collection/OG1/current/SIGTHETA/
 
   DENSITY:
     processing_method:
@@ -304,6 +335,7 @@ netcdf_variables:
     observation_type: calculated
     valid_min:     990.0
     valid_max:     1040.0
+    vocabulary:    http://vocab.nerc.ac.uk/collection/OG1/current/DENSITY/
 
   # -------------------------------------------------------------------------
   # Other measured variables
@@ -314,18 +346,21 @@ netcdf_variables:
     long_name:     Glider heading angle
     standard_name: platform_orientation
     units:         degrees
+    vocabulary:    http://vocab.nerc.ac.uk/collection/OG1/current/HEADING/
 
   PITCH:
     source:        m_pitch
     long_name:     Glider pitch angle
     standard_name: platform_pitch_angle
     units:         degrees
+    vocabulary:    http://vocab.nerc.ac.uk/collection/OG1/current/PITCH/
 
   ROLL:
     source:        m_roll
     long_name:     Glider roll angle
     standard_name: platform_roll_angle
     units:         degrees
+    vocabulary:    http://vocab.nerc.ac.uk/collection/OG1/current/ROLL/
 
   WAYPOINT_LATITUDE:
     source:        c_wpt_lat
@@ -344,27 +379,29 @@ netcdf_variables:
     long_name:     Chlorophyll-a concentration
     standard_name: mass_concentration_of_chlorophyll_a_in_sea_water
     units:         mg m-3
-    sensor:        SENSOR_FLUOROMETER_5059
+    sensor:        SENSOR_FLUOROMETER
     vocabulary:    http://vocab.nerc.ac.uk/collection/OG1/current/CHLA/
 
   CDOM:
     source:        sci_flbbcd_cdom_units
     long_name:     CDOM
     units:         ppb
-    sensor:        SENSOR_FLUOROMETER_5059
+    sensor:        SENSOR_FLUOROMETER
+    vocabulary:    http://vocab.nerc.ac.uk/collection/OG1/current/CDOM/
 
   BBP700:
     source:        sci_flbbcd_bb_units
     long_name:     700 nm wavelength backscatter
     units:         "1"
-    sensor:        SENSOR_FLUOROMETER_5059
+    sensor:        SENSOR_FLUOROMETER
+    vocabulary:    http://vocab.nerc.ac.uk/collection/OG1/current/BBP700/
 
   DOXY:
     source:        sci_oxy4_oxygen
     long_name:     Dissolved oxygen
     standard_name: moles_of_oxygen_per_unit_mass_in_sea_water
     units:         umol kg-1
-    sensor:        SENSOR_DISSOLVED_GAS_SENSORS_665
+    sensor:        SENSOR_DOXY
     valid_min:     0.0
     valid_max:     500.0
     vocabulary:    http://vocab.nerc.ac.uk/collection/OG1/current/DOXY/
@@ -394,6 +431,36 @@ netcdf_variables:
 
   CHLA_QC:
     average_method: QC_protocol
+
+
+scalar_variables:
+
+  PLATFORM_MODEL:
+    from_metadata: glider_model
+    long_name: Glider model name
+
+  WMO_IDENTIFIER:
+    from_metadata: glider_wmo
+    long_name: WMO identifier
+
+  PLATFORM_SERIAL_NUMBER:
+    from_metadata: glider_serial
+    long_name: Glider serial number
+
+  DEPLOYMENT_TIME:
+    from_metadata: deployment_start
+    long_name: Deployment start time
+    units: seconds since 1970-01-01T00:00:00Z
+
+  DEPLOYMENT_LATITUDE:
+    from_metadata: deployment_latitude
+    long_name: Deployment latitude
+    units: degrees_north
+
+  DEPLOYMENT_LONGITUDE:
+    from_metadata: deployment_longitude
+    long_name: Deployment longitude
+    units: degrees_east
 
 
 # NOTE: profile_variables is used by extract_timeseries_profiles (IOOS GDAC
