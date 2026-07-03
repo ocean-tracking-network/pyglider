@@ -262,6 +262,45 @@ netcdf_variables:
         longitude: LONGITUDE
     long_name:     Distance over ground flown since mission start
     units:         km
+  
+  # -------------------------------------------------------------------------
+  # Sparse GPS fix variables (non-NaN only at actual surface fixes)
+  # -------------------------------------------------------------------------
+
+  LATITUDE_GPS:
+    processing_method:
+      gps_fixes_from_nav:
+        role:       latitude
+        lat_source: m_gps_lat
+        lon_source: m_gps_lon
+    long_name:     Latitude of each GPS surface fix
+    standard_name: latitude
+    units:         degrees_north
+    observation_type: measured
+    vocabulary:    http://vocab.nerc.ac.uk/collection/OG1/current/LAT/
+
+  LONGITUDE_GPS:
+    processing_method:
+      gps_fixes_from_nav:
+        role:       longitude
+        lat_source: m_gps_lat
+        lon_source: m_gps_lon
+    long_name:     Longitude of each GPS surface fix
+    standard_name: longitude
+    units:         degrees_east
+    observation_type: measured
+    vocabulary:    http://vocab.nerc.ac.uk/collection/OG1/current/LON/
+
+  TIME_GPS:
+    processing_method:
+      gps_fixes_from_nav:
+        role:       time
+        lat_source: m_gps_lat
+        lon_source: m_gps_lon
+    long_name:     Time of each GPS surface fix
+    calendar:      gregorian
+    units:         seconds since 1970-01-01T00:00:00Z
+    observation_type: measured
 
   # -------------------------------------------------------------------------
   # Derived thermodynamic variables (TEOS-10)
